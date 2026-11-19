@@ -2,6 +2,7 @@
     <component :is="rootTag" v-ripple class="recorded-program"
         v-bind="rootBindings"
         :class="{
+            'recorded-program--list': displayMode === 'List',
             'recorded-program--recording': program.recorded_video.status === 'Recording',
             'recorded-program--failed': program.recorded_video.status === 'AnalysisFailed',
             'recorded-program--offline': forOffline,
@@ -9,7 +10,7 @@
             'recorded-program--offline-job-failed': isOfflineJobFailed,
         }">
         <div class="recorded-program__container">
-            <div class="recorded-program__thumbnail">
+            <div v-if="displayMode === 'Thumbnail'" class="recorded-program__thumbnail">
                 <img class="recorded-program__thumbnail-image" loading="lazy" decoding="async"
                     :src="offlineThumbnailURL" @error="onOfflineThumbnailError">
                 <div class="recorded-program__thumbnail-duration">{{ProgramUtils.getProgramDuration(program)}}</div>
@@ -38,7 +39,7 @@
                     </div>
                 </div>
             </div>
-            <div class="recorded-program__content">
+            <div v-if="displayMode === 'Thumbnail'" class="recorded-program__content">
                 <div class="recorded-program__content-header">
                     <div class="recorded-program__content-title"
                         v-html="ProgramUtils.decorateProgramInfo(program, 'title')"></div>
@@ -71,6 +72,34 @@
                     {{offlineDownloadJob.error}}
                 </div>
                 <div v-else class="recorded-program__content-description"
+                    v-html="ProgramUtils.decorateProgramInfo(program, 'description')"></div>
+            </div>
+            <!-- リスト表示: サムネイルを省き、番組名・チャンネル・録画開始日時・録画時間だけを2行にまとめる -->
+            <div v-else class="recorded-program__list-content">
+                <div class="recorded-program__list-content-header">
+                    <div class="recorded-program__list-content-title"
+                        v-html="ProgramUtils.decorateProgramInfo(program, 'title')"></div>
+                    <div v-if="listStatus !== null" class="recorded-program__list-status"
+                        :class="`recorded-program__list-status--${listStatus.type}`">
+                        <div v-if="listStatus.type === 'recording'" class="recorded-program__list-status-dot"></div>
+                        <Icon v-else-if="listStatus.type === 'failed'" icon="fluent:error-circle-12-regular" width="15px" height="15px" />
+                        {{listStatus.label}}
+                    </div>
+                </div>
+                <div class="recorded-program__list-content-meta">
+                    <div class="recorded-program__list-content-meta-broadcaster" v-if="program.channel">
+                        <img class="recorded-program__list-content-meta-broadcaster-icon" loading="lazy" decoding="async"
+                            :src="`${Utils.api_base_url}/channels/${program.channel.id}/logo`">
+                        <span class="recorded-program__list-content-meta-broadcaster-name">Ch: {{program.channel.channel_number}} {{program.channel.name}}</span>
+                    </div>
+                    <div class="recorded-program__list-content-meta-broadcaster" v-else>
+                        <span class="recorded-program__list-content-meta-broadcaster-name">チャンネル情報なし</span>
+                    </div>
+                    <span class="recorded-program__list-content-meta-time">{{recordingStartTimeLabel}}</span>
+                    <span class="recorded-program__list-content-meta-duration">{{recordingDurationLabel}}</span>
+                    <span class="recorded-program__list-content-meta-fileinfo">{{recordedFileInfoLabel}}</span>
+                </div>
+                <div class="recorded-program__list-content-description"
                     v-html="ProgramUtils.decorateProgramInfo(program, 'description')"></div>
             </div>
             <div v-if="!forWatchedHistory && !forOffline" v-ripple class="recorded-program__mylist"
@@ -188,6 +217,11 @@
                 </v-menu>
             </div>
         </div>
+        <div v-if="displayMode === 'List' && watchHistory" class="recorded-program__list-progress">
+            <div class="recorded-program__list-progress-bar"
+                :style="`width: ${(watchHistory.last_playback_position / program.recorded_video.duration) * 100}%`">
+            </div>
+        </div>
         <div v-if="displayedOfflineDownloadProgress !== null" class="recorded-program__offline-progress">
             <div class="recorded-program__offline-progress-bar"
                 :style="`width: ${displayedOfflineDownloadProgress}%`">
@@ -266,17 +300,19 @@ import OfflineVideos, { type IOfflineDownloadJob, type IOfflineVideo } from '@/s
 import Videos, { type IRecordedProgram } from '@/services/Videos';
 import useSettingsStore from '@/stores/SettingsStore';
 import useUserStore from '@/stores/UserStore';
-import Utils, { PlayerUtils, ProgramUtils } from '@/utils';
+import Utils, { PlayerUtils, ProgramUtils, dayjs } from '@/utils';
 
 // Props
 const props = withDefaults(defineProps<{
     program: IRecordedProgram;
+    displayMode?: 'Thumbnail' | 'List';
     forMylist?: boolean;
     forWatchedHistory?: boolean;
     forOffline?: boolean;
     offlineVideo?: IOfflineVideo | null;
     offlineDownloadJob?: IOfflineDownloadJob | null;
 }>(), {
+    displayMode: 'Thumbnail',
     forMylist: false,
     forWatchedHistory: false,
     forOffline: false,
@@ -367,6 +403,53 @@ const removeFromWatchedHistory = () => {
     });
     Message.show('視聴履歴から削除しました。');
 };
+
+// ***** リスト表示向けの表示用文字列 *****
+
+// 録画開始日時
+// 番組の放送開始時刻 (ProgramUtils.getProgramTime() が返す値) ではなく、録画ファイルの実際の録画開始時刻を表示する
+// 録画開始時刻が不明な録画ファイルは、放送開始時刻で代用せずに不明であることが分かる表示にする
+const recordingStartTimeLabel = computed(() => {
+    const recording_start_time = props.program.recorded_video.recording_start_time;
+    if (recording_start_time === null) {
+        return '----/--/-- (-) --:--';
+    }
+    return Utils.apply28HourClock(dayjs(recording_start_time).format('YYYY/MM/DD (dd) HH:mm'));
+});
+
+// 録画時間 (1時間以上は「1時間30分」、1時間未満は「45分」。秒は切り捨てる)
+const recordingDurationLabel = computed(() => {
+    const total_minutes = Math.floor(props.program.recorded_video.duration / 60);
+    const hours = Math.floor(total_minutes / 60);
+    const minutes = total_minutes % 60;
+    return hours > 0 ? `${hours}時間${minutes}分` : `${minutes}分`;
+});
+
+// 録画ファイルのコンテナ・映像コーデック・解像度・容量 (例: TS / H.264 / 1080i / 3.2GB)
+const recordedFileInfoLabel = computed(() => {
+    const video = props.program.recorded_video;
+    const labels: string[] = [video.container_format === 'MPEG-TS' ? 'TS' : 'MP4', video.video_codec];
+    // メタデータ解析前などで解像度が取得できていないときは、解像度だけを省く
+    if (video.video_resolution_height > 0) {
+        labels.push(`${video.video_resolution_height}${video.video_scan_type === 'Interlaced' ? 'i' : 'p'}`);
+    }
+    labels.push(Utils.formatBytes(video.file_size, 1));
+    return labels.join(' / ');
+});
+
+// リスト表示で番組名の右に出す状態バッジ (サムネイル表示ではサムネイル上に表示している内容と同じ)
+const listStatus = computed<{type: 'recording' | 'failed' | 'partial'; label: string} | null>(() => {
+    if (props.program.recorded_video.status === 'Recording') {
+        return {type: 'recording', label: '録画中'};
+    }
+    if (props.program.recorded_video.status === 'AnalysisFailed') {
+        return {type: 'failed', label: 'メタデータ解析失敗'};
+    }
+    if (props.program.is_partially_recorded) {
+        return {type: 'partial', label: '⚠️ 一部のみ録画'};
+    }
+    return null;
+});
 
 // オフライン保存サムネイルの読み込み失敗時はサーバー側サムネイルへ切り替える
 const shouldUseServerThumbnail = ref(false);
@@ -1164,6 +1247,218 @@ const deleteVideo = async () => {
         }
     }
 
+    // ***** リスト表示 *****
+    // サムネイルを省き、1行目に番組名、2行目にチャンネル・録画開始日時・録画時間を並べる
+    // 画面が広いときだけ、録画ファイル情報 (2行目の右端) と番組概要 (3行目) も表示する
+    &--list {
+        height: auto;
+        contain-intrinsic-height: auto 66px;
+        @include smartphone-vertical {
+            contain-intrinsic-height: auto 54px;
+        }
+
+        .recorded-program__container {
+            padding: 9px 0px;
+            @include smartphone-vertical {
+                padding: 7px 0px;
+            }
+        }
+
+        // マイリストボタンとメニューボタンは、行の高さが低いため縦に並べず横に並べて縦中央に配置する
+        .recorded-program__mylist {
+            top: 50%;
+            right: 48px;
+            @include tablet-vertical {
+                right: 38px;
+            }
+            @include smartphone-horizontal {
+                right: 38px;
+            }
+            @include smartphone-vertical {
+                right: 34px;
+            }
+        }
+        .recorded-program__menu {
+            top: 50%;
+        }
+    }
+
+    &__list-content {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        flex-grow: 1;
+        min-width: 0;  // magic!
+        margin-right: 80px;  // 右端のマイリストボタンとメニューボタンの2つ分
+        @include tablet-vertical {
+            margin-right: 60px;
+        }
+        @include smartphone-horizontal {
+            margin-right: 60px;
+        }
+        @include smartphone-vertical {
+            margin-right: 58px;
+        }
+
+        &-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        &-title {
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;  // 長い番組名は途中で切る
+            font-size: 15px;
+            font-weight: 600;
+            font-feature-settings: "palt" 1;  // 文字詰め
+            letter-spacing: 0.05em;  // 字間を少し空ける
+            @include smartphone-horizontal {
+                font-size: 14px;
+            }
+            @include smartphone-vertical {
+                font-size: 13.5px;
+            }
+        }
+
+        &-meta {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-width: 0;
+            margin-top: 3px;
+            font-size: 13px;
+            color: rgb(var(--v-theme-text-darken-1));
+            white-space: nowrap;
+            @include smartphone-horizontal {
+                font-size: 12px;
+            }
+            @include smartphone-vertical {
+                gap: 10px;
+                margin-top: 2px;
+                font-size: 12px;
+            }
+
+            &-broadcaster {
+                display: flex;
+                align-items: center;
+                flex-shrink: 1;
+                min-width: 0;  // magic!
+
+                &-icon {
+                    flex-shrink: 0;
+                    width: 28px;
+                    height: 16px;
+                    margin-right: 8px;
+                    border-radius: 2px;
+                    // 読み込まれるまでのアイコンの背景
+                    background: linear-gradient(150deg, rgb(var(--v-theme-gray)), rgb(var(--v-theme-background-lighten-2)));
+                    object-fit: cover;
+                    @include smartphone-vertical {
+                        width: 24px;
+                        height: 14px;
+                        margin-right: 0px;
+                    }
+                }
+
+                &-name {
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    // スマホ縦画面ではチャンネル名を省き、チャンネルアイコンだけにする
+                    @include smartphone-vertical {
+                        display: none;
+                    }
+                }
+            }
+
+            &-time, &-duration {
+                flex-shrink: 0;
+            }
+
+            &-fileinfo {
+                flex-shrink: 0;
+                margin-left: auto;
+                font-size: 12px;
+                // 幅が足りない縦画面では録画ファイル情報を省く
+                @include tablet-vertical {
+                    display: none;
+                }
+                @include smartphone-vertical {
+                    display: none;
+                }
+            }
+        }
+
+        &-description {
+            // 3行目の番組概要は、表示に余裕がある PC・タブレット横画面だけに表示する
+            display: none;
+            margin-top: 2px;
+            color: rgb(var(--v-theme-text-darken-1));
+            font-size: 11.5px;
+            line-height: 1.5;
+            overflow: hidden;
+            overflow-wrap: break-word;
+            font-feature-settings: "palt" 1;  // 文字詰め
+            letter-spacing: 0.05em;  // 字間を少し空ける
+            -webkit-line-clamp: 1;  // 1行までに制限
+            -webkit-box-orient: vertical;
+            @include desktop {
+                display: -webkit-box;
+            }
+            @include tablet-horizontal {
+                display: -webkit-box;
+            }
+        }
+    }
+
+    &__list-status {
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        gap: 4px;
+        padding: 3px 6px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 2px;
+        font-size: 10.5px;
+        font-weight: 700;
+        line-height: 1;
+        color: rgba(255, 255, 255, 0.85);
+
+        &--failed {
+            gap: 3px;
+            svg {
+                color: rgb(var(--v-theme-error));
+            }
+        }
+
+        &-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #ff4444;
+            animation: blink 1.5s infinite;
+        }
+    }
+
+    // サムネイルが無いリスト表示では、視聴進捗を行の下端に細く表示する
+    &__list-progress {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 2px;
+        background: rgba(0, 0, 0, 0.35);
+
+        &-bar {
+            height: 100%;
+            background: rgb(var(--v-theme-secondary-lighten-1));
+            transition: width 0.2s ease;
+        }
+    }
+
     &--offline {
         .recorded-program__content-header {
             @include smartphone-vertical {
@@ -1200,7 +1495,8 @@ const deleteVideo = async () => {
         }
         .recorded-program__thumbnail-image,
         .recorded-program__thumbnail-duration,
-        .recorded-program__content {
+        .recorded-program__content,
+        .recorded-program__list-content {
             opacity: 0.65;
         }
         .recorded-program__mylist,

@@ -149,6 +149,18 @@
                     v-model.number="settingsStore.settings.video_watched_history_max_count">
                 </v-text-field>
             </div>
+            <div class="settings__item">
+                <div class="settings__item-heading">録画番組一覧のデフォルトの表示形式</div>
+                <div class="settings__item-label">
+                    ビデオをみるの録画番組一覧を開いたときに、最初に表示される形式を設定します。デフォルトはサムネイル付きの表示です。<br>
+                    一覧の右上のボタンでその場で切り替えることもできます (切り替えた状態は、ページを開き直すとこの設定に戻ります) 。<br>
+                    この設定は同期されないため、PC とスマホなど、デバイスごとに別の形式を設定できます。<br>
+                </div>
+                <v-select class="settings__item-form" color="primary" variant="outlined" hide-details
+                    :density="is_form_dense ? 'compact' : 'default'"
+                    :items="video_list_display_mode" v-model="settingsStore.settings.video_list_display_mode">
+                </v-select>
+            </div>
             <v-divider class="mt-6"></v-divider>
             <div class="settings__item">
                 <div class="settings__item-heading">設定をエクスポート</div>
@@ -290,6 +302,12 @@ export default defineComponent({
                 {title: 'シリーズタブ', value: 'Series'},
                 {title: 'コメントタブ', value: 'Comment'},
                 {title: 'Twitter タブ', value: 'Twitter'},
+            ],
+
+            // 録画番組一覧のデフォルトの表示形式の選択肢
+            video_list_display_mode: [
+                {title: 'サムネイル付きで表示する', value: 'Thumbnail'},
+                {title: 'リスト形式で表示する (番組名・日時などの文字だけ)', value: 'List'},
             ],
 
             // 選択された設定データ (KonomiTV-Settings.json) が入る

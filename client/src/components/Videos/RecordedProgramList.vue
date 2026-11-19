@@ -15,6 +15,17 @@
                 </div>
             </h2>
             <div class="recorded-program-list__actions" :class="{'recorded-program-list__actions--mylist': forMylist}">
+                <v-btn v-if="showViewSwitch"
+                    icon
+                    variant="text"
+                    density="comfortable"
+                    class="recorded-program-list__view-switch"
+                    :aria-label="displayMode === 'Thumbnail' ? 'リスト表示に切り替える' : 'サムネイル表示に切り替える'"
+                    v-ftooltip="displayMode === 'Thumbnail' ? 'リスト表示に切り替える' : 'サムネイル表示に切り替える'"
+                    @click="toggleDisplayMode">
+                    <Icon :icon="displayMode === 'Thumbnail' ? 'fluent:text-bullet-list-20-regular' : 'fluent:grid-20-regular'"
+                        width="22px" height="22px" />
+                </v-btn>
                 <v-select v-if="!hideSort"
                     v-model="sort_order"
                     :items="forMylist ? [
@@ -68,6 +79,7 @@
             </div>
             <div class="recorded-program-list__grid-content">
                 <RecordedProgram v-for="program in displayPrograms" :key="program.id" :program="program"
+                    :displayMode="displayMode"
                     :forMylist="forMylist" :forWatchedHistory="forWatchedHistory" :forOffline="forOffline"
                     :offlineVideo="offlineVideos?.find(video => video.video_id === program.id) ?? null"
                     :offlineDownloadJob="getOfflineDownloadJob(program.id)"
@@ -81,7 +93,7 @@
                 v-model="current_page"
                 active-color="primary"
                 density="comfortable"
-                :length="Math.ceil(displayTotal / 30)"
+                :length="Math.ceil(displayTotal / PAGE_SIZE)"
                 :total-visible="Utils.isSmartphoneVertical() ? 5 : 7"
                 @update:model-value="$emit('update:page', $event)">
             </v-pagination>
@@ -90,16 +102,22 @@
 </template>
 <script lang="ts" setup>
 
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import type { IOfflineDownloadJob, IOfflineVideo } from '@/services/OfflineVideos';
 
 import RecordedProgram from '@/components/Videos/RecordedProgram.vue';
 import { type IRecordedProgram, MylistSortOrder, SortOrder } from '@/services/Videos';
+import useSettingsStore from '@/stores/SettingsStore';
 import Utils from '@/utils';
 
 const router = useRouter();
+const settingsStore = useSettingsStore();
+
+// 1ページあたりの録画番組の件数
+// サーバー側 (server/app/routers/VideosRouter.py) の PAGE_SIZE と必ず同じ値にすること
+const PAGE_SIZE = 60;
 
 // Props
 const props = withDefaults(defineProps<{
@@ -153,6 +171,26 @@ defineEmits<{
     (e: 'cancelOfflineJob', jobID: string): void;
     (e: 'dismissOfflineJob', jobID: string): void;
 }>();
+
+// 録画番組一覧の表示形式 (サムネイル付き or リスト)
+// 初期値は設定 → 全般のデフォルトの表示形式。一覧の右上のボタンによる切り替えはこの一覧だけに反映され、設定には保存しない
+// オフライン保存ページは保存状況の表示がサムネイル上にあるため、常にサムネイル付きで表示する
+const selectedDisplayMode = ref<'Thumbnail' | 'List'>(settingsStore.settings.video_list_display_mode);
+const displayMode = computed<'Thumbnail' | 'List'>(() => props.forOffline ? 'Thumbnail' : selectedDisplayMode.value);
+
+// 表示形式の切り替えボタンを表示するか
+// 「もっと見る」付きのプレビュー用の一覧 (ホーム画面) と、オフライン保存ページでは表示しない
+const showViewSwitch = computed(() => props.showMoreButton === false && props.forOffline === false);
+
+// 設定画面でデフォルトの表示形式が変更されたら、表示中の一覧にも反映する
+watch(() => settingsStore.settings.video_list_display_mode, (newMode) => {
+    selectedDisplayMode.value = newMode;
+});
+
+// 表示形式を切り替える
+const toggleDisplayMode = () => {
+    selectedDisplayMode.value = selectedDisplayMode.value === 'Thumbnail' ? 'List' : 'Thumbnail';
+};
 
 // 現在のページ番号
 const current_page = ref(props.page);
@@ -270,6 +308,9 @@ const getOfflineDownloadJob = (videoID: number): IOfflineDownloadJob | null => {
             font-size: 14px;
             font-weight: 400;
             color: rgb(var(--v-theme-text-darken-1));
+            @include smartphone-vertical-short {
+                margin-left: 8px;
+            }
 
             .spin {
                 animation: spin 1.15s linear infinite;
@@ -310,10 +351,17 @@ const getOfflineDownloadJob = (videoID: number): IOfflineDownloadJob | null => {
             width: 152px;
             margin-left: 12px;
         }
+        // スマホ縦では、見出し・表示形式の切り替えボタン・並び替えを1行に収めるため、並び替えの幅を詰める
+        .v-select {
+            @include smartphone-vertical {
+                width: 136px;
+            }
+        }
         // 幅 380px 以下のスマホ縦では、見出しと「ファイル名降順」などの選択肢を1行に収めるため、文字を小さくして幅を詰める
         &:not(.recorded-program-list__actions--mylist) .v-select {
             @include smartphone-vertical-short {
                 width: 130px;
+                margin-left: 8px;
                 :deep(.v-field__input), :deep(.v-select__selection-text) {
                     font-size: 12px !important;
                 }
@@ -322,7 +370,22 @@ const getOfflineDownloadJob = (videoID: number): IOfflineDownloadJob | null => {
         &--mylist {
             .v-select {
                 width: 143px;
+                @include smartphone-vertical {
+                    width: 136px;
+                }
             }
+        }
+    }
+
+    &__view-switch {
+        flex-shrink: 0;
+        color: rgb(var(--v-theme-text-darken-1));
+        @include smartphone-vertical {
+            width: 32px;
+            height: 32px;
+        }
+        &:hover {
+            color: rgb(var(--v-theme-text));
         }
     }
 

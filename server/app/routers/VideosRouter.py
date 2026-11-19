@@ -48,7 +48,7 @@ router = APIRouter(
 )
 
 # ページングで一度に取得する録画番組の数
-PAGE_SIZE = 30
+PAGE_SIZE = 60
 
 
 async def ConvertRowToRecordedProgram(row: dict[str, Any]) -> schemas.RecordedProgram:
@@ -384,7 +384,7 @@ async def VideosAPI(
     ids: Annotated[list[int] | None, Query(description='録画番組 ID のリスト。指定時は指定された ID の録画番組のみを返す。')] = None,
 ) -> schemas.RecordedPrograms:
     """
-    すべての録画番組を一度に 30 件ずつ取得する。<br>
+    すべての録画番組を一度に 60 件ずつ取得する。<br>
     order には "desc" か "asc" か "ids" か "file_path_asc" か "file_path_desc" を指定する。"desc" と "asc" は番組の開始時刻順、"file_path_asc" と "file_path_desc" は録画ファイルのパスの自然順 (数字は数値として比較する) に並べる。"ids" を指定すると、ids パラメータで指定された順序を維持する。<br>
     page (ページ番号) には 1 以上の整数を指定する。<br>
     ids には録画番組 ID のリストを指定できる。指定時は指定された ID の録画番組のみを返す。
@@ -596,7 +596,7 @@ async def VideosSearchAPI(
     page: Annotated[int, Query(description='ページ番号。')] = 1,
 ) -> schemas.RecordedPrograms:
     """
-    指定されたキーワードで録画番組を一度に 30 件ずつ検索する。<br>
+    指定されたキーワードで録画番組を一度に 60 件ずつ検索する。<br>
     キーワードは title または series_title または subtitle のいずれかに部分一致する録画番組を検索する。<br>
     order には "desc" か "asc" か "file_path_asc" か "file_path_desc" を指定する。"desc" と "asc" は番組の開始時刻順、"file_path_asc" と "file_path_desc" は録画ファイルのパスの自然順 (数字は数値として比較する) に並べる。<br>
     page (ページ番号) には 1 以上の整数を指定する。<br>
