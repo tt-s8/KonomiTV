@@ -3,6 +3,7 @@
         v-bind="rootBindings"
         :class="{
             'recorded-program--list': displayMode === 'List',
+            'recorded-program--no-mylist-button': !forWatchedHistory && !forOffline && !showMylistButton,
             'recorded-program--recording': program.recorded_video.status === 'Recording',
             'recorded-program--failed': program.recorded_video.status === 'AnalysisFailed',
             'recorded-program--offline': forOffline,
@@ -30,7 +31,7 @@
                     <Icon icon="fluent:error-circle-12-regular" width="15px" height="15px" />
                     メタデータ解析失敗
                 </div>
-                <div v-else-if="program.is_partially_recorded" class="recorded-program__thumbnail-status recorded-program__thumbnail-status--partial">
+                <div v-else-if="program.is_partially_recorded && settingsStore.settings.video_show_partially_recorded_label" class="recorded-program__thumbnail-status recorded-program__thumbnail-status--partial">
                     ⚠️ 一部のみ録画
                 </div>
                 <div v-if="watchHistory" class="recorded-program__thumbnail-progress">
@@ -66,7 +67,7 @@
                     <div class="recorded-program__content-meta-broadcaster" v-else>
                         <span class="recorded-program__content-meta-broadcaster-name">チャンネル情報なし</span>
                     </div>
-                    <div class="recorded-program__content-meta-time">{{ProgramUtils.getProgramTime(program)}}</div>
+                    <div class="recorded-program__content-meta-time">{{recordingTimeRangeLabel}}</div>
                 </div>
                 <div v-if="isOfflineJobFailed && offlineDownloadJob?.error" class="recorded-program__content-error">
                     {{offlineDownloadJob.error}}
@@ -102,7 +103,7 @@
                 <div class="recorded-program__list-content-description"
                     v-html="ProgramUtils.decorateProgramInfo(program, 'description')"></div>
             </div>
-            <div v-if="!forWatchedHistory && !forOffline" v-ripple class="recorded-program__mylist"
+            <div v-if="!forWatchedHistory && !forOffline && showMylistButton" v-ripple class="recorded-program__mylist"
                 :class="{'recorded-program__mylist--highlight': isInMylist && !forMylist}"
                 v-ftooltip="isInMylist ? 'マイリストから削除する' : 'マイリストに追加する'"
                 @click.prevent.stop="toggleMylist"
@@ -406,7 +407,14 @@ const removeFromWatchedHistory = () => {
 
 // ***** リスト表示向けの表示用文字列 *****
 
-// 録画開始日時
+// 秒を四捨五入して、分単位にした日時を返す (17:29:55 → 17:30 / 17:30:29 → 17:30 / 17:30:30 → 17:31)
+const roundToMinute = (time: string) => dayjs(time).add(30, 'second').startOf('minute');
+
+// マイリストへの追加ボタン (+) を表示するか
+// マイリストのページ内の削除ボタン (forMylist) は、設定にかかわらず常に表示する
+const showMylistButton = computed(() => props.forMylist || settingsStore.settings.video_show_mylist_add_button);
+
+// 録画開始日時 (リスト表示用。秒は四捨五入する)
 // 番組の放送開始時刻 (ProgramUtils.getProgramTime() が返す値) ではなく、録画ファイルの実際の録画開始時刻を表示する
 // 録画開始時刻が不明な録画ファイルは、放送開始時刻で代用せずに不明であることが分かる表示にする
 const recordingStartTimeLabel = computed(() => {
@@ -414,12 +422,25 @@ const recordingStartTimeLabel = computed(() => {
     if (recording_start_time === null) {
         return '----/--/-- (-) --:--';
     }
-    return Utils.apply28HourClock(dayjs(recording_start_time).format('YYYY/MM/DD (dd) HH:mm'));
+    return Utils.apply28HourClock(roundToMinute(recording_start_time).format('YYYY/MM/DD (dd) HH:mm'));
 });
 
-// 録画時間 (1時間以上は「1時間30分」、1時間未満は「45分」。秒は切り捨てる)
+// 録画開始日時 ～ 録画終了時刻 (録画時間) (サムネイル表示用。秒は四捨五入する。例: 2026/11/18 (水) 17:30 ～ 18:00 (30分))
+// 録画番組の放送時刻 (ProgramUtils.getProgramTime() が返す値) ではなく、録画ファイルの実際の録画時刻を表示する
+const recordingTimeRangeLabel = computed(() => {
+    const video = props.program.recorded_video;
+    if (video.recording_start_time === null) {
+        return '----/--/-- (-) --:-- ～ --:-- (--分)';
+    }
+    const start = roundToMinute(video.recording_start_time).format('YYYY/MM/DD (dd) HH:mm');
+    // 録画中などで録画終了時刻がまだ分からないときは、終了時刻だけを --:-- にする
+    const end = video.recording_end_time !== null ? roundToMinute(video.recording_end_time).format('HH:mm') : '--:--';
+    return Utils.apply28HourClock(`${start} ～ ${end} (${Math.round(video.duration / 60)}分)`);
+});
+
+// 録画時間 (1時間以上は「1時間30分」、1時間未満は「45分」。秒は四捨五入する)
 const recordingDurationLabel = computed(() => {
-    const total_minutes = Math.floor(props.program.recorded_video.duration / 60);
+    const total_minutes = Math.round(props.program.recorded_video.duration / 60);
     const hours = Math.floor(total_minutes / 60);
     const minutes = total_minutes % 60;
     return hours > 0 ? `${hours}時間${minutes}分` : `${minutes}分`;
@@ -445,7 +466,7 @@ const listStatus = computed<{type: 'recording' | 'failed' | 'partial'; label: st
     if (props.program.recorded_video.status === 'AnalysisFailed') {
         return {type: 'failed', label: 'メタデータ解析失敗'};
     }
-    if (props.program.is_partially_recorded) {
+    if (props.program.is_partially_recorded && settingsStore.settings.video_show_partially_recorded_label) {
         return {type: 'partial', label: '⚠️ 一部のみ録画'};
     }
     return null;
@@ -1280,6 +1301,25 @@ const deleteVideo = async () => {
         }
         .recorded-program__menu {
             top: 50%;
+        }
+    }
+
+    // マイリストへの追加ボタン (+) を表示しないときは、メニューボタンだけを縦中央に置き、右側の余白も狭める
+    &--no-mylist-button {
+        .recorded-program__menu {
+            top: 50%;
+        }
+        .recorded-program__list-content {
+            margin-right: 44px;
+            @include tablet-vertical {
+                margin-right: 30px;
+            }
+            @include smartphone-horizontal {
+                margin-right: 30px;
+            }
+            @include smartphone-vertical {
+                margin-right: 28px;
+            }
         }
     }
 

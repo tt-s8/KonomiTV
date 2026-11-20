@@ -19,11 +19,13 @@
                         :hideSort="true"
                         :hidePagination="true"
                         :showMoreButton="true"
+                        :showViewSwitch="true"
                         :showSearch="true"
                         :isLoading="is_loading"
                         :showEmptyMessage="!is_loading"
                         @more="$router.push('/videos/programs')" />
                     <RecordedProgramList
+                        v-if="settingsStore.settings.video_show_home_mylist"
                         title="マイリスト"
                         :programs="mylist_programs"
                         :total="total_mylist_programs"
@@ -96,6 +98,11 @@ watch(() => settingsStore.settings.mylist, async () => {
     await fetchMylistPrograms();
 }, { deep: true });
 
+// マイリストの欄の表示設定が変更されたとき、表示された場合はマイリストの録画番組を取得する
+watch(() => settingsStore.settings.video_show_home_mylist, async () => {
+    await fetchMylistPrograms();
+});
+
 // 視聴履歴の変更を監視して即座に再取得
 watch(() => settingsStore.settings.watched_history, async () => {
     await fetchWatchedPrograms();
@@ -112,6 +119,11 @@ const fetchRecentPrograms = async () => {
 
 // マイリストの録画番組を取得
 const fetchMylistPrograms = async () => {
+    // マイリストの欄を表示しない設定のときは、取得しない
+    if (settingsStore.settings.video_show_home_mylist === false) {
+        return;
+    }
+
     // マイリストに登録されている録画番組の ID を取得
     const mylist_ids = settingsStore.settings.mylist
         .filter(item => item.type === 'RecordedProgram')

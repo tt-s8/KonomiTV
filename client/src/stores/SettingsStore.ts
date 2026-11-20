@@ -84,6 +84,9 @@ export interface ILocalClientSettings extends IClientSettings {
     tv_panel_active_tab: 'Program' | 'Channel' | 'Comment' | 'Twitter';
     video_panel_active_tab: 'RecordedProgram' | 'Series' | 'Comment' | 'Twitter';
     video_watched_history_max_count: number;
+    video_show_partially_recorded_label: boolean;
+    video_show_mylist_add_button: boolean;
+    video_show_home_mylist: boolean;
     video_list_display_mode: 'Thumbnail' | 'List';
     tv_streaming_quality: LiveStreamingQuality;
     tv_streaming_quality_cellular: LiveStreamingQuality;
@@ -238,8 +241,14 @@ export const ILocalClientSettingsDefault: ILocalClientSettings = {
     // 視聴履歴の保持件数 (Default: 50件)
     // この値を超えると、最も古い視聴履歴から自動的に削除される
     video_watched_history_max_count: 50,
-    // 録画番組一覧のデフォルトの表示形式 (Default: サムネイル付きで表示する) (同期無効)
-    // 一覧の右上のボタンでその場で切り替えられるが、切り替えはこの設定には保存されない
+    // 録画番組一覧に「⚠️ 一部のみ録画」の表示を出すか (Default: 出さない)
+    video_show_partially_recorded_label: false,
+    // 録画番組一覧の右側に、マイリストへの追加ボタン (+) を出すか (Default: 出さない)
+    video_show_mylist_add_button: false,
+    // ビデオをみる (ホーム画面) にマイリストの欄を出すか (Default: 出さない)
+    video_show_home_mylist: false,
+    // 録画番組一覧の表示形式 (Default: サムネイル付きで表示する) (同期無効)
+    // 設定画面には項目がなく、一覧の右上の切り替えボタンで変更した内容がそのまま保存され、次回以降も引き継がれる
     video_list_display_mode: 'Thumbnail',
 
     // ***** 設定 → 画質 *****
@@ -399,6 +408,9 @@ export const SYNCABLE_SETTINGS_KEYS: (keyof IClientSettings)[] = [
     'tv_panel_active_tab',
     'video_panel_active_tab',
     'video_watched_history_max_count',
+    'video_show_partially_recorded_label',
+    'video_show_mylist_add_button',
+    'video_show_home_mylist',
     // video_list_display_mode: 同期無効
     // tv_streaming_quality: 同期無効
     // tv_streaming_quality_cellular: 同期無効

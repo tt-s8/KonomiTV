@@ -87,6 +87,10 @@ class ClientSettings(BaseModel):
     tv_panel_active_tab: Literal['Program', 'Channel', 'Comment', 'Twitter'] = 'Program'
     video_panel_active_tab: Literal['RecordedProgram', 'Series', 'Comment', 'Twitter'] = 'RecordedProgram'
     video_watched_history_max_count: Annotated[int, PositiveInt] = 50
+    video_show_partially_recorded_label: bool = False
+    video_show_mylist_add_button: bool = False
+    video_show_home_mylist: bool = False
+    # video_list_display_mode: 同期無効
     # tv_streaming_quality: 同期無効
     # tv_streaming_quality_cellular: 同期無効
     # tv_data_saver_mode: 同期無効

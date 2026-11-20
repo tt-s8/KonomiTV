@@ -15,7 +15,7 @@
                 </div>
             </h2>
             <div class="recorded-program-list__actions" :class="{'recorded-program-list__actions--mylist': forMylist}">
-                <v-btn v-if="showViewSwitch"
+                <v-btn v-if="showViewSwitchButton"
                     icon
                     variant="text"
                     density="comfortable"
@@ -130,6 +130,7 @@ const props = withDefaults(defineProps<{
     hideSort?: boolean;
     hidePagination?: boolean;
     showMoreButton?: boolean;
+    showViewSwitch?: boolean;
     showBackButton?: boolean;
     showEmptyMessage?: boolean;
     emptyIcon?: string;
@@ -149,6 +150,7 @@ const props = withDefaults(defineProps<{
     hideSort: false,
     hidePagination: false,
     showMoreButton: false,
+    showViewSwitch: undefined,
     showBackButton: false,
     showEmptyMessage: true,
     emptyIcon: 'fluent:search-20-regular',
@@ -173,23 +175,19 @@ defineEmits<{
 }>();
 
 // 録画番組一覧の表示形式 (サムネイル付き or リスト)
-// 初期値は設定 → 全般のデフォルトの表示形式。一覧の右上のボタンによる切り替えはこの一覧だけに反映され、設定には保存しない
+// 切り替えボタンで変更した内容はそのまま設定 (このデバイスのみ・同期なし) に保存され、次回以降も引き継がれる
+// すべての録画番組一覧 (ホーム画面のプレビューを含む) で共通の値を使う
 // オフライン保存ページは保存状況の表示がサムネイル上にあるため、常にサムネイル付きで表示する
-const selectedDisplayMode = ref<'Thumbnail' | 'List'>(settingsStore.settings.video_list_display_mode);
-const displayMode = computed<'Thumbnail' | 'List'>(() => props.forOffline ? 'Thumbnail' : selectedDisplayMode.value);
+const displayMode = computed<'Thumbnail' | 'List'>(() => props.forOffline ? 'Thumbnail' : settingsStore.settings.video_list_display_mode);
 
 // 表示形式の切り替えボタンを表示するか
-// 「もっと見る」付きのプレビュー用の一覧 (ホーム画面) と、オフライン保存ページでは表示しない
-const showViewSwitch = computed(() => props.showMoreButton === false && props.forOffline === false);
-
-// 設定画面でデフォルトの表示形式が変更されたら、表示中の一覧にも反映する
-watch(() => settingsStore.settings.video_list_display_mode, (newMode) => {
-    selectedDisplayMode.value = newMode;
-});
+// 通常は、「もっと見る」付きのプレビュー用の一覧 (ホーム画面) とオフライン保存ページ以外で表示する
+// showViewSwitch が指定されたときは、その値を優先する (ホーム画面の「新着の録画番組」でだけ表示するために使う)
+const showViewSwitchButton = computed(() => props.forOffline === false && (props.showViewSwitch ?? props.showMoreButton === false));
 
 // 表示形式を切り替える
 const toggleDisplayMode = () => {
-    selectedDisplayMode.value = selectedDisplayMode.value === 'Thumbnail' ? 'List' : 'Thumbnail';
+    settingsStore.settings.video_list_display_mode = settingsStore.settings.video_list_display_mode === 'Thumbnail' ? 'List' : 'Thumbnail';
 };
 
 // 現在のページ番号

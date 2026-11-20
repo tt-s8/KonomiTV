@@ -480,7 +480,7 @@ async def VideosAPI(
         LEFT JOIN channels ch ON rp.channel_id = ch.id
         WHERE rv.status != 'Missing'
         {where_clause}
-        ORDER BY rp.start_time {order}, rp.id {order}
+        ORDER BY COALESCE(rv.recording_start_time, rp.start_time) {order}, rp.id {order}
         LIMIT ? OFFSET ?
     """
 
@@ -732,7 +732,7 @@ async def VideosSearchAPI(
         CROSS JOIN recorded_videos rv ON rp.id = rv.recorded_program_id
         LEFT JOIN channels ch ON rp.channel_id = ch.id
         WHERE rv.status != 'Missing' AND {where_clause}
-        ORDER BY rp.start_time {order}, rp.id {order}
+        ORDER BY COALESCE(rv.recording_start_time, rp.start_time) {order}, rp.id {order}
         LIMIT ? OFFSET ?
     """
 
