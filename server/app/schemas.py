@@ -249,6 +249,14 @@ class RecordedPrograms(BaseModel):
     total: int
     recorded_programs: list[RecordedProgram]
 
+class VideoStorageUsage(BaseModel):
+    label: str  # ドライブ名 (Windows では E: など) またはフォルダのパス
+    total: int  # 全体容量 (バイト)
+    free: int  # 空き容量 (バイト)
+
+class VideoStorageUsages(BaseModel):
+    storages: list[VideoStorageUsage]
+
 class OfflineVideoStreamMetadata(BaseModel):
     # 保存対象の録画番組 ID
     video_id: int

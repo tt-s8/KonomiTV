@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+import os
 import pathlib
 import re
 from datetime import datetime
@@ -11,6 +12,7 @@ from typing import Annotated, Any, Literal, cast
 import anyio
 import cv2
 import numpy as np
+import psutil
 from ariblib.sections import TimeOffsetSection
 from fastapi import (
     APIRouter,
@@ -28,6 +30,7 @@ from starlette.datastructures import Headers
 from tortoise import connections
 
 from app import logging, schemas
+from app.config import Config
 from app.constants import STATIC_DIR, THUMBNAILS_DIR
 from app.metadata.RecordedScanTask import RecordedScanTask
 from app.metadata.ThumbnailGenerator import ThumbnailGenerator
@@ -776,6 +779,50 @@ async def VideosSearchAPI(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to execute raw SQL query',
         )
+
+
+@router.get(
+    '/storage',
+    summary = '録画フォルダのストレージ容量 API',
+    response_description = '録画フォルダがあるドライブ (ボリューム) ごとの、全体容量と空き容量。',
+    response_model = schemas.VideoStorageUsages,
+)
+async def VideoStorageAPI() -> schemas.VideoStorageUsages:
+    """
+    config.yaml の recorded_folders に設定された録画フォルダがあるドライブ (ボリューム) ごとに、全体容量と空き容量を取得する。<br>
+    同じドライブにある録画フォルダは 1 つにまとめる。存在しない録画フォルダ (取り外された外付けドライブなど) は無視する。
+    """
+
+    # ファイルシステムへのアクセスは、スリープ中のドライブなどで時間がかかることがあるため、別スレッドで実行する
+    def GetStorageUsages() -> list[schemas.VideoStorageUsage]:
+        storage_usages: list[schemas.VideoStorageUsage] = []
+        seen_devices: set[int] = set()
+        for recorded_folder in Config().video.recorded_folders:
+            try:
+                # 同じドライブにある録画フォルダは、デバイス ID が同じになるので 1 つにまとめる
+                device_id = os.stat(recorded_folder).st_dev
+                if device_id in seen_devices:
+                    continue
+                disk_usage = psutil.disk_usage(str(recorded_folder))
+            except OSError as ex:
+                logging.warning(
+                    f'[VideosRouter][VideoStorageAPI] Failed to get disk usage. '
+                    f'[recorded_folder: {recorded_folder}] ({ex.__class__.__name__}: {ex})'
+                )
+                continue
+            seen_devices.add(device_id)
+
+            # 表示用のラベル: Windows ではドライブ名 (E: など) 、それ以外ではフォルダのパス
+            ## Docker 上では、パスの先頭に付与されている Docker 環境向けの Prefix (/host-rootfs) を外す
+            label = pathlib.Path(recorded_folder).drive or str(recorded_folder).removeprefix('/host-rootfs')
+            storage_usages.append(schemas.VideoStorageUsage(
+                label = label,
+                total = disk_usage.total,
+                free = disk_usage.free,
+            ))
+        return storage_usages
+
+    return schemas.VideoStorageUsages(storages=await asyncio.to_thread(GetStorageUsages))
 
 
 @router.get(

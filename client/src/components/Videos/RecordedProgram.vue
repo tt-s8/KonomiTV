@@ -99,6 +99,7 @@
                     <span class="recorded-program__list-content-meta-time">{{recordingStartTimeLabel}}</span>
                     <span class="recorded-program__list-content-meta-duration">{{recordingDurationLabel}}</span>
                     <span class="recorded-program__list-content-meta-fileinfo">{{recordedFileInfoLabel}}</span>
+                    <span class="recorded-program__list-content-meta-filesize" v-if="program.recorded_video.file_size > 0">{{recordedFileSizeLabel}}</span>
                 </div>
                 <div class="recorded-program__list-content-description"
                     v-html="ProgramUtils.decorateProgramInfo(program, 'description')"></div>
@@ -445,6 +446,10 @@ const recordingDurationLabel = computed(() => {
     const minutes = total_minutes % 60;
     return hours > 0 ? `${hours}時間${minutes}分` : `${minutes}分`;
 });
+
+// 録画ファイルの容量 (例: 3.2GB)
+// 録画ファイル情報 (recordedFileInfoLabel) を省く縦画面で、2行目の右端に容量だけを表示するために使う
+const recordedFileSizeLabel = computed(() => Utils.formatBytes(props.program.recorded_video.file_size, 1));
 
 // 録画ファイルのコンテナ・映像コーデック・解像度・容量 (例: TS / H.264 / 1080i / 3.2GB)
 const recordedFileInfoLabel = computed(() => {
@@ -1422,12 +1427,26 @@ const deleteVideo = async () => {
                 flex-shrink: 0;
                 margin-left: auto;
                 font-size: 12px;
-                // 幅が足りない縦画面では録画ファイル情報を省く
+                // 幅が足りない縦画面では録画ファイル情報を省く (代わりに、右端に容量だけを表示する)
                 @include tablet-vertical {
                     display: none;
                 }
                 @include smartphone-vertical {
                     display: none;
+                }
+            }
+
+            // 録画ファイル情報を省く縦画面だけで、2行目の右端に容量を表示する
+            &-filesize {
+                display: none;
+                flex-shrink: 0;
+                margin-left: auto;
+                font-size: 12px;
+                @include tablet-vertical {
+                    display: block;
+                }
+                @include smartphone-vertical {
+                    display: block;
                 }
             }
         }

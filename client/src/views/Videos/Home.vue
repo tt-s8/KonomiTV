@@ -23,7 +23,12 @@
                         :showSearch="true"
                         :isLoading="is_loading"
                         :showEmptyMessage="!is_loading"
-                        @more="$router.push('/videos/programs')" />
+                        @more="$router.push('/videos/programs')">
+                        <!-- 見出しと一覧の間に、録画フォルダのあるドライブの容量を表示する (「もっと見る」先の一覧には表示しない) -->
+                        <template #after-header>
+                            <StorageUsage />
+                        </template>
+                    </RecordedProgramList>
                     <RecordedProgramList
                         v-if="settingsStore.settings.video_show_home_mylist"
                         title="マイリスト"
@@ -67,6 +72,7 @@ import HeaderBar from '@/components/HeaderBar.vue';
 import Navigation from '@/components/Navigation.vue';
 import SPHeaderBar from '@/components/SPHeaderBar.vue';
 import RecordedProgramList from '@/components/Videos/RecordedProgramList.vue';
+import StorageUsage from '@/components/Videos/StorageUsage.vue';
 import { IRecordedProgram } from '@/services/Videos';
 import Videos from '@/services/Videos';
 import useSettingsStore from '@/stores/SettingsStore';

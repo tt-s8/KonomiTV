@@ -171,6 +171,13 @@ export interface IRecordedPrograms {
     recorded_programs: IRecordedProgram[];
 }
 
+/** 録画フォルダがあるドライブ (ボリューム) のストレージ容量を表すインターフェース */
+export interface IVideoStorageUsage {
+    label: string;  // ドライブ名 (Windows では E: など) またはフォルダのパス
+    total: number;  // 全体容量 (バイト)
+    free: number;  // 空き容量 (バイト)
+}
+
 /** 過去ログコメントを表すインターフェース */
 export interface IJikkyoComment {
     time: number;
@@ -190,6 +197,25 @@ export interface IJikkyoComments {
 
 
 class Videos {
+
+    /**
+     * 録画フォルダがあるドライブ (ボリューム) ごとのストレージ容量を取得する
+     * 容量の表示は補助的な情報なので、取得に失敗してもエラーメッセージは表示しない
+     * @returns ドライブごとのストレージ容量 or 取得に失敗した場合は null
+     */
+    static async fetchStorageUsages(): Promise<IVideoStorageUsage[] | null> {
+
+        // API リクエストを実行
+        const response = await APIClient.get<{storages: IVideoStorageUsage[]}>('/videos/storage');
+
+        // エラー処理
+        if (response.type === 'error') {
+            return null;
+        }
+
+        return response.data.storages;
+    }
+
 
     /**
      * 録画番組一覧を取得する
