@@ -7,6 +7,7 @@ import json
 import math
 import pathlib
 import random
+import re
 import subprocess
 import time
 from collections.abc import Iterator
@@ -31,6 +32,7 @@ from app.constants import (
     STATIC_DIR,
     THUMBNAILS_DIR,
 )
+from app.metadata.CMSectionsDetector import CMSectionsDetector
 from app.models.RecordedVideo import RecordedVideo
 from app.utils import ShutdownProcessPoolExecutor
 
@@ -59,6 +61,15 @@ class ThumbnailGenerator:
     TSREADEX_FRAME_EXTRACTION_TIMEOUT: ClassVar[int] = 600  # tsreadex 経由のフレーム抽出タイムアウト時間 (秒)
     FRAME_EXTRACTION_MAX_DEMUX_PACKETS: ClassVar[int] = 20000  # 1候補位置でフレーム探索する最大パケット数
     FRAME_EXTRACTION_MAX_CONSECUTIVE_FAILURES: ClassVar[int] = 10  # 連続失敗時に残り候補を黒画像で埋める閾値
+
+    # 代表サムネイルの候補区間 (番組の長さに対する割合)
+    ## 番組の 23~26% と 60~70% の範囲を候補とする (OP や ED と被りにくい範囲)
+    CANDIDATE_RANGE_RATIOS: ClassVar[tuple[tuple[float, float], ...]] = ((0.23, 0.26), (0.60, 0.70))
+
+    # チャプターファイル (.chapter.txt) があるときの、代表サムネイルの候補区間の設定
+    ## CM などの区間を除いた「本編」だけを対象に、CANDIDATE_RANGE_RATIOS の割合で候補区間を作り直す
+    CHAPTER_BOUNDARY_MARGIN_SEC: ClassVar[float] = 1.0  # 除外する区間との境界から、本編側に空ける余白 (チャプター位置のずれ対策) (秒)
+    CHAPTER_MIN_MAIN_DURATION_SEC: ClassVar[float] = 60.0  # 除外後に残る本編の合計がこれより短いときは、チャプターを信用せず従来の候補区間を使う (秒)
 
     # サムネイル情報のバージョン
     THUMBNAIL_INFO_VERSION: ClassVar[int] = 1
@@ -165,6 +176,7 @@ class ThumbnailGenerator:
         face_detection_mode: Literal['Human', 'Anime'] | None = None,
         has_video_stream_changes: bool = False,
         service_id: int | None = None,
+        program_time_range: tuple[float, float] | None = None,
     ) -> None:
         """
         プレイヤーのシークバー用タイル画像と、候補区間内で最も良い1枚の代表サムネイルを生成するクラスを初期化する
@@ -178,6 +190,8 @@ class ThumbnailGenerator:
             face_detection_mode (Literal['Human', 'Anime'] | None): 顔検出モード (デフォルト: None)
             has_video_stream_changes (bool): TS 内で映像 PID や映像ストリーム構成が変化しているかどうか
             service_id (int | None): 録画対象サービス ID (tsreadex のサービス選択に使用)
+            program_time_range (tuple[float, float] | None): 録画マージンを除いた番組の時間範囲 (start, end) 。
+                指定されたとき、チャプターファイルがあれば CM などを除いた本編だけから候補区間を作り直す (デフォルト: None)
         """
 
         self.file_path = file_path
@@ -188,6 +202,9 @@ class ThumbnailGenerator:
         self.face_detection_mode = face_detection_mode
         self.has_video_stream_changes = has_video_stream_changes
         self.service_id = service_id
+        self.program_time_range = program_time_range
+        # チャプターファイルから求めた、CM などを除いた本編の区間 (チャプターファイルを使わないときは None)
+        self.main_sections: list[tuple[float, float]] | None = None
 
         # 動画の長さに応じて適切なタイル化間隔を計算
         self.base_tile_interval_sec = self.__calculateBaseTileInterval(duration_sec)
@@ -294,13 +311,12 @@ class ThumbnailGenerator:
         end_time = duration_sec - recorded_program.recording_end_margin
 
         # 番組の 23~26% と 60~70% の時間範囲を候補区間とする
-        ## OP や CM と被りにくい範囲を選択
+        ## OP や ED と被りにくい範囲を選択
+        ## チャプターファイルがある録画では、generateAndSave() の中で CM などを除いた本編だけから候補区間を作り直す
         total_time = end_time - start_time
         candidate_time_ranges = [
-            # 23~26%
-            (start_time + total_time * 0.23, start_time + total_time * 0.26),
-            # 60~70%
-            (start_time + total_time * 0.60, start_time + total_time * 0.70),
+            (start_time + total_time * start_ratio, start_time + total_time * end_ratio)
+            for start_ratio, end_ratio in cls.CANDIDATE_RANGE_RATIOS
         ]
 
         # ジャンル情報から顔検出の要否・アニメ or 実写人物が重要なジャンルを判断
@@ -316,6 +332,7 @@ class ThumbnailGenerator:
             face_detection_mode = face_detection_mode,
             has_video_stream_changes = recorded_program.recorded_video.has_video_stream_changes,
             service_id = recorded_program.channel.service_id if recorded_program.channel is not None else None,
+            program_time_range = (start_time, end_time),
         )
 
 
@@ -369,6 +386,9 @@ class ThumbnailGenerator:
         if not await thumbnails_dir.is_dir():
             await thumbnails_dir.mkdir(parents=True, exist_ok=True)
 
+        # 0. チャプターファイルがあれば、CM などを除いた本編だけから代表サムネイルの候補区間を作り直す
+        await self.__restrictCandidatesToMainSections()
+
         # 1. 候補オフセットを計算
         candidate_offsets = self.__calculateCandidateOffsets()
 
@@ -416,6 +436,117 @@ class ThumbnailGenerator:
         logging.info(f'{self.file_path}: Thumbnail generation completed. (Total: {time.time() - start_time:.2f} sec)')
         logging.debug(f'Thumbnail tile -> {self.seekbar_thumbnails_tile_path.name}')
         logging.debug(f'Representative -> {self.representative_thumbnail_path.name}')
+
+
+    async def __restrictCandidatesToMainSections(self) -> None:
+        """
+        録画ファイルと同じ名前のチャプターファイル (.chapter.txt) があれば、CM などを除いた本編だけから、代表サムネイルの候補区間を作り直す
+        チャプターファイルが無い・読めない・使えないときは、何もせず従来の候補区間 (番組の 23~26% と 60~70%) のまま生成を続ける
+        """
+
+        # 番組の時間範囲が分からないときは、候補区間を作り直せない
+        if self.program_time_range is None:
+            return
+
+        try:
+            chapters = await CMSectionsDetector(self.file_path, self.duration_sec).readChapters()
+            if chapters is None or len(chapters) == 0:
+                return
+            result = self.calculateCandidatesFromChapters(chapters, self.duration_sec, self.program_time_range)
+        except Exception as ex:
+            # チャプターの扱いに失敗しても、サムネイルの生成そのものは従来の候補区間で続ける
+            logging.warning(f'{self.file_path}: Failed to use chapters for thumbnail candidates. Using default candidate intervals.', exc_info=ex)
+            return
+
+        if result is None:
+            logging.info(f'{self.file_path}: Chapter file found, but not usable for thumbnail candidates. Using default candidate intervals.')
+            return
+
+        self.candidate_intervals, self.main_sections = result
+        main_duration = sum(end - start for start, end in self.main_sections)
+        logging.info(
+            f'{self.file_path}: Using chapter file for thumbnail candidates. '
+            f'(main sections: {len(self.main_sections)}, main duration: {main_duration:.1f} sec)'
+        )
+
+
+    @classmethod
+    def calculateCandidatesFromChapters(
+        cls,
+        chapters: list[tuple[int, str, float]],
+        duration_sec: float,
+        program_time_range: tuple[float, float],
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]] | None:
+        """
+        チャプターのリストから、CM などを除いた本編の区間と、その本編の中での代表サムネイルの候補区間を求める
+
+        除外する区間は、名前が CM で始まるチャプター (CM, CM?) と、名前が「A15Sec」のように「数字 + Sec」で終わるチャプター。
+        後者は、名前の数字がその区間の長さ (秒) を表す、5~60 秒程度の短い区間で、次回予告や提供表示、CM と見分けにくい区間などが含まれる。
+        本編の区間をつなげた時間 (CM などを除いた時間) に対して CANDIDATE_RANGE_RATIOS の割合で候補区間を取り、実際の時刻に戻す。
+
+        Args:
+            chapters (list[tuple[int, str, float]]): チャプターのリスト (番号, 名前, 時刻 (秒))
+            duration_sec (float): 動画の再生時間 (秒)
+            program_time_range (tuple[float, float]): 録画マージンを除いた番組の時間範囲 (start, end)
+
+        Returns:
+            tuple[list[tuple[float, float]], list[tuple[float, float]]] | None:
+                (候補区間のリスト, 本編の区間のリスト) 。除外後に残る本編が短すぎるなど、チャプターを使えない場合は None
+        """
+
+        # 各チャプターの区間 (開始, 終了) を作る。終了は次のチャプターの開始で、最後のチャプターは動画の終わりまで
+        sorted_chapters = sorted(chapters, key=lambda chapter: chapter[2])
+        chapter_sections: list[tuple[str, float, float]] = []
+        # 最初のチャプターより前に空白があるときは、区間の種類が分からないので本編として扱う
+        if sorted_chapters[0][2] > 0:
+            chapter_sections.append(('', 0.0, sorted_chapters[0][2]))
+        for index, (_, name, start) in enumerate(sorted_chapters):
+            end = sorted_chapters[index + 1][2] if index + 1 < len(sorted_chapters) else duration_sec
+            chapter_sections.append((name, start, end))
+
+        # 本編の区間を求める (CM と「〜Sec」の短い区間を除外し、番組の時間範囲に収める)
+        program_start, program_end = program_time_range
+        margin = cls.CHAPTER_BOUNDARY_MARGIN_SEC
+        main_sections: list[tuple[float, float]] = []
+        for name, start, end in chapter_sections:
+            if name.startswith('CM') or re.search(r'\d+Sec$', name, re.IGNORECASE):
+                continue
+            start = max(start, program_start)
+            end = min(end, program_end)
+            if end <= start:
+                continue
+            # 直前の本編とつながっているとき (A, A のように本編が複数のチャプターに分かれているとき) は1つの区間にまとめる
+            if len(main_sections) > 0 and abs(main_sections[-1][1] - start) < 0.01:
+                main_sections[-1] = (main_sections[-1][0], end)
+            else:
+                main_sections.append((start, end))
+
+        # 除外する区間との境界から余白を空ける (余白で無くなる短い区間は捨てる)
+        main_sections = [(start + margin, end - margin) for start, end in main_sections if end - start > margin * 2]
+
+        # 除外後に残る本編が短すぎるときは、チャプターが想定と違う可能性が高いので使わない
+        main_duration = sum(end - start for start, end in main_sections)
+        if main_duration < cls.CHAPTER_MIN_MAIN_DURATION_SEC:
+            return None
+
+        # 本編だけをつなげた時間に対する割合で候補区間を取り、実際の時刻に戻す (本編の区間をまたぐときは分割される)
+        candidate_ranges: list[tuple[float, float]] = []
+        for start_ratio, end_ratio in cls.CANDIDATE_RANGE_RATIOS:
+            virtual_start = main_duration * start_ratio
+            virtual_end = main_duration * end_ratio
+            section_offset = 0.0  # この本編の区間より前にある、本編の合計時間
+            for section_start, section_end in main_sections:
+                section_length = section_end - section_start
+                piece_start = max(virtual_start, section_offset)
+                piece_end = min(virtual_end, section_offset + section_length)
+                if piece_end > piece_start:
+                    candidate_ranges.append((
+                        section_start + (piece_start - section_offset),
+                        section_start + (piece_end - section_offset),
+                    ))
+                section_offset += section_length
+
+        return candidate_ranges, main_sections
 
 
     def __calculateBaseTileInterval(self, duration_sec: float) -> float:
@@ -594,7 +725,16 @@ class ThumbnailGenerator:
         else:
             # 候補区間内にフレームがない場合はランダムに選択
             logging.warning(f'{self.file_path}: No frames found in candidate intervals. Selecting a random frame.')
-            best_frame = random.choice(all_frames)
+            random_frame_indexes = list(range(len(all_frames)))
+            # チャプターファイルから本編の区間が分かっているときは、CM などのフレームを選ばないよう本編のフレームだけから選ぶ
+            if self.main_sections is not None:
+                main_frame_indexes = [
+                    index for index in random_frame_indexes
+                    if any(start <= index * self.tile_interval_sec <= end for start, end in self.main_sections)
+                ]
+                if len(main_frame_indexes) > 0:
+                    random_frame_indexes = main_frame_indexes
+            best_frame = all_frames[random.choice(random_frame_indexes)]
 
         if not self.__saveRepresentativeThumbnail(best_frame):
             logging.error(f'{self.file_path}: Failed to save representative thumbnail.')

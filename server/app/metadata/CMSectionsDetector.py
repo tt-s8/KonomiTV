@@ -93,12 +93,13 @@ class CMSectionsDetector:
         return None
 
 
-    async def __detectFromChapterFile(self) -> list[schemas.CMSection] | None:
+    async def readChapters(self) -> list[tuple[int, str, float]] | None:
         """
-        録画ファイルに対応するチャプターファイルがもしあれば解析し、CM 区間情報を取得する
+        録画ファイルに対応するチャプターファイル (.chapter.txt) がもしあれば読み込み、チャプターのリストを取得する
+        CM 区間の検出 (__detectFromChapterFile) と、サムネイル生成 (ThumbnailGenerator) の両方から使われる
 
         Returns:
-            list[CMSection] | None: チャプターファイルが存在し、解析に成功した場合は CM 区間のリストを返す
+            list[tuple[int, str, float]] | None: チャプターファイルが存在し、解析に成功した場合は (番号, 名前, 時刻 (秒)) のリストを返す
         """
 
         # チャプターファイルのパスを生成
@@ -120,7 +121,6 @@ class CMSectionsDetector:
 
         # チャプター情報を格納するリスト
         chapters: list[tuple[int, str, float]] = []  # (番号, 名前, 時刻)
-        cm_sections: list[schemas.CMSection] = []
 
         # 2行ずつ処理 (チャプター時刻行とチャプター名行)
         for i in range(0, len(lines), 2):
@@ -154,7 +154,24 @@ class CMSectionsDetector:
                 logging.warning(f'{chapter_file_path}: Failed to parse chapter data. (line {i}-{i+1}): {time_line}, {name_line}', exc_info=ex)
                 return None
 
+        return chapters
+
+
+    async def __detectFromChapterFile(self) -> list[schemas.CMSection] | None:
+        """
+        録画ファイルに対応するチャプターファイルがもしあれば解析し、CM 区間情報を取得する
+
+        Returns:
+            list[CMSection] | None: チャプターファイルが存在し、解析に成功した場合は CM 区間のリストを返す
+        """
+
+        # チャプターファイルを読み込む
+        chapters = await self.readChapters()
+        if chapters is None:
+            return None
+
         # CM 区間を検出
+        cm_sections: list[schemas.CMSection] = []
         current_cm_start: float | None = None
 
         for i, (_, name, ctime) in enumerate(chapters):
