@@ -8,6 +8,7 @@ import time
 from threading import Lock
 from typing import ClassVar, Literal, cast
 
+from app import logging
 from app.utils.edcb import SetChInfo
 from app.utils.edcb.CtrlCmdUtil import CtrlCmdUtil
 from app.utils.edcb.EDCBUtil import EDCBUtil
@@ -109,6 +110,12 @@ class EDCBTuner:
         ## まだ接続していないとき、接続が閉じられた後は None になる
         self._edcb_pipe_stream_reader: PipeStreamReader | None = None
 
+        # 録画中のチューナー (EpgDataCap_Bon) の出力を共用して視聴しているかどうか
+        ## 空きチューナーが無いとき、同じチャンネルを録画中のチューナーがあれば、その出力を借りて視聴する
+        ## True のときの _edcb_process_id は、NetworkTV として起動したものではなく、EpgTimerSrv が録画に使っているプロセスの ID
+        ## そのため、チューナーを閉じるときに EDCB 側のチューナーを閉じてはいけない (録画が止まってしまう)
+        self._is_recording_tuner_shared: bool = False
+
         # このチューナーの利用状態
         ## Idle: 未使用 / Starting: 起動・チャンネル切り替え中 / Active: 受信中 / Cancelling: キャンセル中
         self._state: EDCBTunerState = 'Idle'
@@ -128,6 +135,17 @@ class EDCBTuner:
 
         # NetworkTV ID を返す
         return self._edcb_networktv_id
+
+
+    def isRecordingTunerShared(self) -> bool:
+        """
+        録画中のチューナーの出力を共用して視聴しているかどうかを取得する
+
+        Returns:
+            bool: 録画中のチューナーの出力を共用しているかどうか
+        """
+
+        return self._is_recording_tuner_shared
 
 
     def getState(self) -> EDCBTunerState:
@@ -169,6 +187,31 @@ class EDCBTuner:
         return self._owner_live_stream_id == live_stream_id
 
 
+    async def __findRecordingTunerProcessID(self, network_id: int, transport_stream_id: int) -> int | None:
+        """
+        指定したチャンネル (NID・TSID が同じ物理チャンネル) を録画中の EpgDataCap_Bon (チューナー) のプロセス ID を取得する
+        同じ物理チャンネルであれば、録画中のサービスとは別のサービスでも、同じ TS に含まれていれば視聴できる
+
+        Args:
+            network_id (int): ネットワーク ID
+            transport_stream_id (int): トランスポートストリーム ID
+
+        Returns:
+            int | None: 録画中のチューナーのプロセス ID (見つからなかった場合は None)
+        """
+
+        edcb = CtrlCmdUtil()
+        tuner_processes = await edcb.sendEnumTunerProcess()
+        if tuner_processes is None:
+            return None
+
+        for tuner_process in tuner_processes:
+            if tuner_process['rec_flag'] is True and tuner_process['onid'] == network_id and tuner_process['tsid'] == transport_stream_id:
+                return tuner_process['process_id']
+
+        return None
+
+
     async def setChannel(
         self,
         network_id: int,
@@ -203,6 +246,9 @@ class EDCBTuner:
         self.service_id = service_id
         self.transport_stream_id = transport_stream_id
 
+        # チューナーを再利用してチャンネルを切り替えるときのために、録画中のチューナーの共用状態をリセットする
+        self._is_recording_tuner_shared = False
+
         # edcb.sendNwTVIDSetCh() に渡す辞書
         set_ch_info: SetChInfo = {
 
@@ -229,7 +275,10 @@ class EDCBTuner:
         # チューナーを起動する
         ## ほかのタスクがチューナーを閉じている (Idling -> Offline) などで空きがない場合があるのでいくらかリトライする
         self._state = 'Starting'
-        set_ch_timeout = time.monotonic() + 5  # 現在時刻から5秒後
+        set_ch_started_at = time.monotonic()
+        set_ch_timeout = set_ch_started_at + 5  # 現在時刻から5秒後
+        recording_tuner_check_at = set_ch_started_at + 1  # 録画中のチューナーを確認する時刻
+        is_recording_tuner_checked = False
         while True:
 
             # チューナーの起動（あるいはチャンネル変更）を試す
@@ -239,6 +288,22 @@ class EDCBTuner:
             # チューナーが起動できた、もしくはリトライ時間をタイムアウトした
             if self._edcb_process_id is not None or time.monotonic() >= set_ch_timeout:
                 break
+
+            # しばらく経っても起動できないときは、同じチャンネル (物理チャンネル) を録画中のチューナーがないか確認する
+            ## 空きチューナーが録画に使われていても、録画中のチャンネルだけは、そのチューナーの出力を借りて視聴できる
+            ## ほかのタスクがチューナーを閉じている最中の一時的な失敗は 0.25 秒程度で解消するので、少し待ってから確認する
+            ## (空きチューナーがあれば、録画中のチューナーに依存しない専用のチューナーを優先して使う)
+            if is_recording_tuner_checked is False and time.monotonic() >= recording_tuner_check_at:
+                is_recording_tuner_checked = True
+                recording_process_id = await self.__findRecordingTunerProcessID(network_id, transport_stream_id)
+                if recording_process_id is not None:
+                    logging.info(
+                        f'[EDCBTuner] No free tuner. Sharing the recording tuner. '
+                        f'(process_id: {recording_process_id}, onid: {network_id}, tsid: {transport_stream_id})'
+                    )
+                    self._edcb_process_id = recording_process_id
+                    self._is_recording_tuner_shared = True
+                    break
 
             await asyncio.sleep(0.5)
 
@@ -443,8 +508,14 @@ class EDCBTuner:
             return False
 
         # チューナーを閉じ、実行結果を取得する
-        edcb = CtrlCmdUtil()
-        result = await edcb.sendNwTVIDClose(self._edcb_networktv_id)
+        ## 録画中のチューナーを共用していたときは、NetworkTV として起動したチューナーではない
+        ## EDCB 側のチューナーを閉じると録画が止まってしまうので、何も閉じない (ストリーミング接続は disconnect() で閉じられている)
+        if self._is_recording_tuner_shared is True:
+            result = True
+        else:
+            edcb = CtrlCmdUtil()
+            result = await edcb.sendNwTVIDClose(self._edcb_networktv_id)
+        self._is_recording_tuner_shared = False
 
         # チューナーが閉じられたので、プロセス ID を None に戻す
         self._edcb_process_id = None

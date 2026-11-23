@@ -937,7 +937,11 @@ class LiveEncodingTask:
 
                 # チューナーに接続する
                 # 放送波が送信される TCP ソケットまたは名前付きパイプを取得する
-                self.live_stream.setStatus('Standby', 'チューナーに接続しています…')
+                ## 空きチューナーが無く、録画中のチューナーの出力を共用して視聴するときは、その旨をステータス詳細に表示する
+                if self.live_stream.tuner.isRecordingTunerShared() is True:
+                    self.live_stream.setStatus('Standby', '録画中のチューナーに接続しています…')
+                else:
+                    self.live_stream.setStatus('Standby', 'チューナーに接続しています…')
                 reader = await self.live_stream.tuner.connect(self.live_stream.live_stream_id)
 
                 # チューナーへの接続に失敗した
