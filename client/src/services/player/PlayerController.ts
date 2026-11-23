@@ -126,6 +126,10 @@ class PlayerController {
     // 破棄済みかどうか
     private destroyed = false;
 
+    // 録画視聴時の、チャプター (CM の境目) の位置 (秒) の昇順リスト
+    // シークバー上のマーカー (CM / 本編) と同じ位置で、前後のチャプターへ移動するボタンが利用する
+    private chapter_boundaries: number[] = [];
+
     // ライブ再生開始時の一時ミュートを、保存済みミュートと区別するフラグ
     // 一時ミュートで発火した volumechange を、ユーザー操作として保存しないために使う
     private is_live_startup_temporary_muted = false;
@@ -327,6 +331,7 @@ class PlayerController {
         // TODO: DPlayer のマーカー機能はまともに実装されていないため、将来的にはレコーダーのように CM 区間のシークバーを
         // 暗くした上で CM 区間を自動スキップできるようにしたい
         const highlights: Array<{text: string, time: number}> = [];
+        this.chapter_boundaries = [];
         if (this.playback_mode === 'Video' && player_store.recorded_program?.recorded_video?.cm_sections) {
             const cm_sections = player_store.recorded_program.recorded_video.cm_sections;
             const videoDuration = player_store.recorded_program.recorded_video.duration;
@@ -350,6 +355,9 @@ class PlayerController {
                 }
             }
             console.log('\u001b[31m[PlayerController] Added CM section markers:', highlights);
+
+            // チャプター (CM の境目) の位置を、シークバー上のマーカーと同じ位置で保持する
+            this.chapter_boundaries = [...new Set(highlights.map((highlight) => highlight.time))].sort((a, b) => a - b);
         }
 
         // DPlayer が mpegts.js / hls.js / mpeg2toh264 を検出できるように、実行時ライブラリを window 直下へ公開する
@@ -1194,6 +1202,70 @@ class PlayerController {
             // 通知を表示してから PlayerController を破棄すると DPlayer の DOM 要素ごと消えてしまうので、DPlayer を作り直した後に通知を表示する
             this.player?.notice('プレイヤーを再起動しました。', undefined, undefined, undefined);
         });
+
+        // 録画視聴時のみ: 前後のチャプター (CM の境目) へ移動するボタンを追加する
+        // チャプター (CM 区間) の情報が無い録画では、ボタンを追加しない
+        if (this.playback_mode === 'Video' && this.chapter_boundaries.length > 0) {
+            // 前のチャプター / 次のチャプターのボタンの SVG アイコン (Material Design Icons の skip_previous / skip_next)
+            const previous_icon_path = 'M6 6h2v12H6zm3.5 6l8.5 6V6z';
+            const next_icon_path = 'M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z';
+            let previous_button_selector: string;
+            let next_button_selector: string;
+            if (this.player.container.classList.contains('dplayer-mobile')) {
+                // スマホ表示: 画面下のバーには余裕が無いため、画面中央の「巻き戻し / 再生 / 早送り」ボタンの外側 (左右) に配置する
+                this.player.container.querySelector('.dplayer-mobile-icon-backward')!.insertAdjacentHTML('beforebegin', `
+                    <button class="dplayer-mobile-icon dplayer-mobile-icon-chapter-previous" aria-label="前のチャプターへ">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="${previous_icon_path}"></path></svg>
+                    </button>
+                `);
+                this.player.container.querySelector('.dplayer-mobile-icon-forward')!.insertAdjacentHTML('afterend', `
+                    <button class="dplayer-mobile-icon dplayer-mobile-icon-chapter-next" aria-label="次のチャプターへ">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="${next_icon_path}"></path></svg>
+                    </button>
+                `);
+                previous_button_selector = '.dplayer-mobile-icon-chapter-previous';
+                next_button_selector = '.dplayer-mobile-icon-chapter-next';
+            } else {
+                // PC・タブレット表示: 画面下のバーの、再生ボタンの左右に配置する
+                const play_icon = this.player.container.querySelector('.dplayer-icon.dplayer-play-icon')!;
+                play_icon.insertAdjacentHTML('beforebegin', `
+                    <div class="dplayer-icon dplayer-chapter-previous-icon" aria-label="前のチャプターへ"
+                        data-balloon-nofocus="" data-balloon-pos="up">
+                        <span class="dplayer-icon-content">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="${previous_icon_path}"/></svg>
+                        </span>
+                    </div>
+                `);
+                play_icon.insertAdjacentHTML('afterend', `
+                    <div class="dplayer-icon dplayer-chapter-next-icon" aria-label="次のチャプターへ"
+                        data-balloon-nofocus="" data-balloon-pos="up">
+                        <span class="dplayer-icon-content">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="${next_icon_path}"/></svg>
+                        </span>
+                    </div>
+                `);
+                previous_button_selector = '.dplayer-chapter-previous-icon';
+                next_button_selector = '.dplayer-chapter-next-icon';
+            }
+            // 次のチャプター: 現在位置より後ろにある、最も近い境目へ移動する
+            // (境目へシークした直後は、再生位置が境目より少し手前になることがあるため、0.5 秒以内の境目は現在位置とみなして飛ばす)
+            this.player.container.querySelector(next_button_selector)!.addEventListener('click', () => {
+                if (this.destroyed === true || this.player === null) return;
+                const next_boundary = this.chapter_boundaries.find((time) => time > this.player!.video.currentTime + 0.5);
+                if (next_boundary === undefined) {
+                    this.player.notice('これ以降のチャプターはありません。', undefined, undefined, undefined);
+                    return;
+                }
+                this.player.seek(next_boundary);
+            });
+            // 前のチャプター: 現在のチャプターの先頭が 3 秒より前にあれば、その先頭へ戻る
+            // (チャプターの先頭付近で押したときは、さらに 1 つ前のチャプターの先頭へ戻る。前のチャプターが無ければ先頭へ戻る)
+            this.player.container.querySelector(previous_button_selector)!.addEventListener('click', () => {
+                if (this.destroyed === true || this.player === null) return;
+                const previous_boundary = [...this.chapter_boundaries].reverse().find((time) => time < this.player!.video.currentTime - 3);
+                this.player.seek(previous_boundary ?? 0);
+            });
+        }
 
         // Screen Wake Lock API を利用して画面の自動スリープを抑制する
         // 待つ必要はないので非同期で実行
