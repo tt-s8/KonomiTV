@@ -87,6 +87,8 @@ export interface ILocalClientSettings extends IClientSettings {
     video_show_partially_recorded_label: boolean;
     video_show_mylist_add_button: boolean;
     video_show_home_mylist: boolean;
+    video_show_home_watched_history: boolean;
+    video_start_page: 'Home' | 'Programs';
     video_list_display_mode: 'Thumbnail' | 'List';
     tv_streaming_quality: LiveStreamingQuality;
     tv_streaming_quality_cellular: LiveStreamingQuality;
@@ -247,6 +249,11 @@ export const ILocalClientSettingsDefault: ILocalClientSettings = {
     video_show_mylist_add_button: false,
     // ビデオをみる (ホーム画面) にマイリストの欄を出すか (Default: 出さない)
     video_show_home_mylist: false,
+    // ビデオをみる (ホーム画面) に視聴履歴の欄を出すか (Default: 出さない)
+    video_show_home_watched_history: false,
+    // 「ビデオをみる」を開いたときに最初に表示する画面 (Default: 録画番組一覧) (同期無効)
+    // 録画番組一覧にしているときは、ホーム画面を経由せず、録画番組一覧 (/videos/programs) へ転送する
+    video_start_page: 'Programs',
     // 録画番組一覧の表示形式 (Default: サムネイル付きで表示する) (同期無効)
     // 設定画面には項目がなく、一覧の右上の切り替えボタンで変更した内容がそのまま保存され、次回以降も引き継がれる
     video_list_display_mode: 'Thumbnail',
@@ -411,6 +418,8 @@ export const SYNCABLE_SETTINGS_KEYS: (keyof IClientSettings)[] = [
     'video_show_partially_recorded_label',
     'video_show_mylist_add_button',
     'video_show_home_mylist',
+    'video_show_home_watched_history',
+    // video_start_page: 同期無効
     // video_list_display_mode: 同期無効
     // tv_streaming_quality: 同期無効
     // tv_streaming_quality_cellular: 同期無効

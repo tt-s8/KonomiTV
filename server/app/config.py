@@ -90,6 +90,8 @@ class ClientSettings(BaseModel):
     video_show_partially_recorded_label: bool = False
     video_show_mylist_add_button: bool = False
     video_show_home_mylist: bool = False
+    video_show_home_watched_history: bool = False
+    # video_start_page: 同期無効
     # video_list_display_mode: 同期無効
     # tv_streaming_quality: 同期無効
     # tv_streaming_quality_cellular: 同期無効

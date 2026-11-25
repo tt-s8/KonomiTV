@@ -45,6 +45,7 @@
                         :forMylist="true"
                         @more="$router.push('/mylist/')" />
                     <RecordedProgramList
+                        v-if="settingsStore.settings.video_show_home_watched_history"
                         title="視聴履歴"
                         :programs="watched_programs"
                         :total="total_watched_programs"
@@ -114,6 +115,11 @@ watch(() => settingsStore.settings.watched_history, async () => {
     await fetchWatchedPrograms();
 }, { deep: true });
 
+// 視聴履歴の欄の表示設定が変更されたとき、表示された場合は視聴履歴の録画番組を取得する
+watch(() => settingsStore.settings.video_show_home_watched_history, async () => {
+    await fetchWatchedPrograms();
+});
+
 // 最近録画された番組を取得
 const fetchRecentPrograms = async () => {
     const result = await Videos.fetchVideos('desc', 1);
@@ -153,6 +159,11 @@ const fetchMylistPrograms = async () => {
 
 // 視聴履歴の録画番組を取得
 const fetchWatchedPrograms = async () => {
+    // 視聴履歴の欄を表示しない設定のときは、取得しない
+    if (settingsStore.settings.video_show_home_watched_history === false) {
+        return;
+    }
+
     // 視聴履歴に登録されている録画番組の ID を取得
     const watched_ids = settingsStore.settings.watched_history
         .sort((a, b) => b.updated_at - a.updated_at)  // 最後に視聴した順

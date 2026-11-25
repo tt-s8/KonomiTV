@@ -2,6 +2,7 @@
 
 import { createRouter, createWebHistory } from 'vue-router';
 
+import useSettingsStore from '@/stores/SettingsStore';
 import Utils from '@/utils';
 
 
@@ -38,6 +39,15 @@ const router = createRouter({
             path: '/videos/',
             name: 'Videos Home',
             component: () => import('@/views/Videos/Home.vue'),
+            beforeEnter: (to, from, next) => {
+                // 設定で「ビデオをみる」の最初の画面が録画番組一覧になっているときは、ホーム画面ではなく録画番組一覧へ転送する
+                // ナビゲーションやパンくずリスト、プレイヤーの戻るボタンなど、/videos/ へ向かうすべての導線がこの転送を通る
+                if (useSettingsStore().settings.video_start_page === 'Programs') {
+                    next({path: '/videos/programs'});
+                    return;
+                }
+                next();  // 通常通り遷移
+            },
         },
         {
             path: '/videos/search',

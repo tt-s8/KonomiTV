@@ -21,7 +21,12 @@
                         :showBackButton="true"
                         :showEmptyMessage="!is_loading"
                         @update:page="updatePage"
-                        @update:sortOrder="updateSortOrder($event as SortOrder)" />
+                        @update:sortOrder="updateSortOrder($event as SortOrder)">
+                        <!-- 「ビデオをみる」の最初の画面を録画番組一覧にしているときだけ、ホーム画面と同じ容量バーを表示する -->
+                        <template #after-header>
+                            <StorageUsage v-if="settingsStore.settings.video_start_page === 'Programs'" />
+                        </template>
+                    </RecordedProgramList>
                 </div>
             </div>
         </main>
@@ -37,14 +42,17 @@ import HeaderBar from '@/components/HeaderBar.vue';
 import Navigation from '@/components/Navigation.vue';
 import SPHeaderBar from '@/components/SPHeaderBar.vue';
 import RecordedProgramList from '@/components/Videos/RecordedProgramList.vue';
+import StorageUsage from '@/components/Videos/StorageUsage.vue';
 import { IRecordedProgram, SortOrder } from '@/services/Videos';
 import Videos from '@/services/Videos';
+import useSettingsStore from '@/stores/SettingsStore';
 import useUserStore from '@/stores/UserStore';
 import Utils from '@/utils';
 
 // ルーター
 const route = useRoute();
 const router = useRouter();
+const settingsStore = useSettingsStore();
 
 // 録画番組のリスト
 const programs = ref<IRecordedProgram[]>([]);

@@ -179,6 +179,28 @@
                     v-model="settingsStore.settings.video_show_home_mylist">
                 </v-switch>
             </div>
+            <div class="settings__item settings__item--switch">
+                <label class="settings__item-heading" for="video_show_home_watched_history">ビデオをみるに視聴履歴の欄を表示する</label>
+                <label class="settings__item-label" for="video_show_home_watched_history">
+                    ビデオをみる (ホーム画面) に、視聴履歴の欄を表示します。デフォルトはオフです。<br>
+                    オフにしても、視聴履歴のページ自体は引き続き開けます。<br>
+                </label>
+                <v-switch class="settings__item-switch" color="primary" id="video_show_home_watched_history" hide-details
+                    v-model="settingsStore.settings.video_show_home_watched_history">
+                </v-switch>
+            </div>
+            <div class="settings__item">
+                <div class="settings__item-heading">ビデオをみるを開いたときの最初の画面</div>
+                <div class="settings__item-label">
+                    ナビゲーションの「ビデオをみる」などを開いたときに、最初に表示される画面を設定します。デフォルトは録画番組一覧です。<br>
+                    「録画番組一覧」にすると、ホーム画面 (新着・マイリスト・視聴履歴の欄がある画面) を経由せず、録画番組一覧が直接開きます。<br>
+                    この設定は同期されないため、PC とスマホなど、デバイスごとに別の画面を設定できます。<br>
+                </div>
+                <v-select class="settings__item-form" color="primary" variant="outlined" hide-details
+                    :density="is_form_dense ? 'compact' : 'default'"
+                    :items="video_start_page" v-model="settingsStore.settings.video_start_page">
+                </v-select>
+            </div>
             <v-divider class="mt-6"></v-divider>
             <div class="settings__item">
                 <div class="settings__item-heading">設定をエクスポート</div>
@@ -320,6 +342,12 @@ export default defineComponent({
                 {title: 'シリーズタブ', value: 'Series'},
                 {title: 'コメントタブ', value: 'Comment'},
                 {title: 'Twitter タブ', value: 'Twitter'},
+            ],
+
+            // ビデオをみるを開いたときの最初の画面の選択肢
+            video_start_page: [
+                {title: '録画番組一覧', value: 'Programs'},
+                {title: 'ホーム (新着の録画番組・マイリストなどの欄がある画面)', value: 'Home'},
             ],
 
             // 選択された設定データ (KonomiTV-Settings.json) が入る

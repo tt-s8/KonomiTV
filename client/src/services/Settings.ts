@@ -57,6 +57,8 @@ export interface IClientSettings {
     video_show_partially_recorded_label: boolean;
     video_show_mylist_add_button: boolean;
     video_show_home_mylist: boolean;
+    video_show_home_watched_history: boolean;
+    // video_start_page: 同期無効
     // video_list_display_mode: 同期無効
     // tv_streaming_quality: 同期無効
     // tv_streaming_quality_cellular: 同期無効
