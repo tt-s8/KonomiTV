@@ -1,0 +1,95 @@
+# フォーク用のワークフロー: ソースだけの変更を入れた custom ブランチから、インストーラー (5) が取り込む master を自動で作る
+#   master = custom + client/dist のビルド結果 (1 コミット)
+#
+# 使い方:
+#   - custom ブランチに push すると、自動でビルドして master を更新する
+#   - Actions タブ → 「Build master from custom」 → Run workflow で、手動でも実行できる
+#     「sync_upstream」にチェックを入れると、先に本家 (tsukumijima/KonomiTV) の master に custom を rebase してからビルドする
+#     (競合したときや、ビルド・型チェックに失敗したときは、そこで止まり、custom・master は何も更新されない)
+#
+# このファイルは、custom ブランチの .github/workflows/build-master.yaml に置く
+name: Build master from custom
+
+on:
+  push:
+    branches:
+      - custom
+  workflow_dispatch:
+    inputs:
+      sync_upstream:
+        description: '本家の master に追従 (rebase) してからビルドする'
+        type: boolean
+        default: false
+
+# master・custom ブランチを更新するために、書き込み権限が必要
+permissions:
+  contents: write
+
+# 同時に複数実行すると master の更新が競合するので、順番に実行する
+concurrency:
+  group: build-master
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/tsukumijima/KonomiTV.git
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: custom ブランチを取得
+        uses: actions/checkout@v4
+        with:
+          ref: custom
+          fetch-depth: 0
+
+      - name: Git のユーザーを設定
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: 本家の master に追従 (rebase)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_upstream }}
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch upstream master
+          # 競合したときは、ここで失敗して終了する (custom・master は何も更新されない)
+          git rebase upstream/master
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Python をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: サーバーの構文チェック
+        run: python -m compileall -q server/app
+
+      - name: クライアントをビルド (型チェックを含む)
+        working-directory: client
+        run: |
+          npm install --global yarn
+          yarn install --frozen-lockfile
+          yarn build
+
+      - name: master を更新
+        env:
+          SYNC_UPSTREAM: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_upstream }}
+        run: |
+          # dist のビルドコミットを作る前の、ソースだけの状態を覚えておく
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          git add -A client/dist
+          if git diff --cached --quiet; then
+            echo 'client/dist に変更はありません'
+          else
+            git commit -m 'build: client/dist を再ビルド'
+          fi
+          # 本家に追従したときだけ、custom も更新する (ビルドが成功したあとにだけ push する)
+          if [ "$SYNC_UPSTREAM" = 'true' ]; then
+            git push --force origin "$SOURCE_SHA:refs/heads/custom"
+          fi
+          git push --force origin "HEAD:refs/heads/master"
